@@ -7,8 +7,9 @@
  */
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+// Aceita a URL copiada com "/rest/v1/" ou barra no final: o cliente precisa só da base
+const url = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '')
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
 export const supabase = url && anonKey ? createClient(url, anonKey) : null
 
