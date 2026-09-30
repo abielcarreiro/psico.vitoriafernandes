@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   Design tokens — paleta acolhedora (sálvia, creme, terracota suave)
+------------------------------------------------------------------- */
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
+
+  --color-sage-50: #f3f6f2;
+  --color-sage-100: #e4ebe2;
+  --color-sage-200: #c9d7c6;
+  --color-sage-300: #a6bda2;
+  --color-sage-400: #819d7d;
+  --color-sage-500: #5f7a5f;
+  --color-sage-600: #4c644c;
+  --color-sage-700: #3d503e;
+  --color-sage-800: #324133;
+  --color-sage-900: #28342a;
+
+  --color-cream-50: #fdfbf7;
+  --color-cream-100: #f8f3ea;
+  --color-cream-200: #f0e6d5;
+  --color-cream-300: #e4d4b9;
+
+  --color-clay-100: #f6e4da;
+  --color-clay-300: #e3b59c;
+  --color-clay-500: #c2825f;
+  --color-clay-600: #a8694a;
+
+  --color-ink-900: #22271f;
+  --color-ink-700: #454c42;
+  --color-ink-500: #6b7267;
+  --color-ink-400: #8d9389;
+
+  --shadow-soft: 0 1px 2px rgb(40 52 42 / 0.04), 0 8px 24px -8px rgb(40 52 42 / 0.10);
+  --shadow-lift: 0 2px 4px rgb(40 52 42 / 0.05), 0 20px 40px -12px rgb(40 52 42 / 0.18);
+
+  --animate-fade-up: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-in: fade-in 0.25s ease-out both;
+  --animate-pop: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+  }
+}
+
+@layer base {
+  html { scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+  body {
+    @apply bg-cream-50 text-ink-900 font-sans antialiased;
+  }
+  h1, h2, h3, .font-display { font-family: var(--font-serif); letter-spacing: -0.015em; }
+  :focus-visible { outline: 2px solid var(--color-sage-500); outline-offset: 2px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
+}
+
+/* ------------------------------------------------------------------
+   Componentes utilitários reaproveitados em toda a aplicação
+------------------------------------------------------------------- */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none;
+}
+@utility btn-primary { @apply btn bg-sage-600 text-white shadow-soft hover:bg-sage-700 active:scale-[0.98]; }
+@utility btn-secondary { @apply btn bg-white text-ink-900 ring-1 ring-sage-200 hover:bg-sage-50 hover:ring-sage-300; }
+@utility btn-ghost { @apply btn text-ink-700 hover:bg-sage-50; }
+@utility btn-danger { @apply btn bg-white text-red-700 ring-1 ring-red-200 hover:bg-red-50; }
+@utility btn-whatsapp { @apply btn bg-[#1f9d55] text-white shadow-soft hover:bg-[#188046]; }
+
+@utility card { @apply rounded-2xl bg-white shadow-soft ring-1 ring-sage-100; }
+
+@utility label { @apply mb-1.5 block text-sm font-medium text-ink-700; }
+@utility input {
+  @apply w-full rounded-xl border-0 bg-white px-3.5 py-2.5 text-sm text-ink-900 ring-1 ring-sage-200 placeholder:text-ink-400 transition focus:ring-2 focus:ring-sage-500 focus:outline-none;
+}
+@utility chip { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+
+@utility scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--color-sage-200) transparent; }
