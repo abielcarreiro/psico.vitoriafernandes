@@ -276,8 +276,13 @@ export function AppStoreProvider({ children }) {
     if (!supabase) return 'O banco de dados não está configurado.'
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
     if (!error) return null
-    if (error.message?.includes('Invalid login credentials')) return 'E-mail ou senha incorretos.'
-    return 'Não foi possível entrar. Tente novamente.'
+    console.error(error)
+    const msg = error.message || ''
+    if (msg.includes('Invalid login credentials')) return 'E-mail ou senha incorretos.'
+    if (msg.includes('Email not confirmed')) return 'E-mail ainda não confirmado. Confirme o usuário no painel do Supabase.'
+    if (error.status === 429 || msg.toLowerCase().includes('rate limit')) return 'Muitas tentativas. Aguarde alguns minutos e tente de novo.'
+    if (msg.includes('Failed to fetch') || error.name === 'AuthRetryableFetchError') return 'Sem conexão com o servidor. Verifique sua internet.'
+    return `Não foi possível entrar (${msg || 'erro desconhecido'}).`
   }, [])
 
   const signOut = useCallback(async () => {
