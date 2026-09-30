@@ -10,7 +10,7 @@
  * ações abaixo por chamadas de API — os componentes não precisam mudar.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { createSeedData, defaultSettings } from '../data/seed'
+import { createInitialData, defaultSettings } from '../data/seed'
 import { STORAGE_KEY } from '../lib/constants'
 import { bookingCode, normalize, onlyDigits, uid } from '../lib/format'
 import { todayISO } from '../lib/date'
@@ -26,13 +26,21 @@ function load() {
       const p = data.settings?.psychologist
       if (p?.crp === 'CRP 13/12345') p.crp = defaultSettings.psychologist.crp
       if (p?.phone === '(83) 99999-0000') p.phone = defaultSettings.psychologist.phone
+      // Remove pacientes, sessões e bloqueios de demonstração salvos por versões antigas
+      const real = (item) => !String(item.id).includes('_seed_') && !String(item.patientId ?? '').includes('_seed_')
       // Mescla configurações para tolerar novas chaves adicionadas em versões futuras
-      return { ...data, settings: { ...defaultSettings, ...data.settings } }
+      return {
+        ...data,
+        patients: (data.patients ?? []).filter(real),
+        appointments: (data.appointments ?? []).filter(real),
+        blocks: (data.blocks ?? []).filter(real),
+        settings: { ...defaultSettings, ...data.settings },
+      }
     }
   } catch {
-    /* localStorage indisponível ou corrompido: usa dados de demonstração */
+    /* localStorage indisponível ou corrompido: começa vazio */
   }
-  return createSeedData()
+  return createInitialData()
 }
 
 function save(state) {
@@ -166,9 +174,6 @@ export function AppStoreProvider({ children }) {
     setState((s) => ({ ...s, settings: { ...s.settings, ...patch } }))
   }, [])
 
-  /** Restaura os dados de demonstração */
-  const resetDemo = useCallback(() => setState(createSeedData()), [])
-
   /** Exporta um backup JSON dos dados */
   const exportData = useCallback(() => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })
@@ -193,10 +198,9 @@ export function AppStoreProvider({ children }) {
       addBlock,
       removeBlock,
       updateSettings,
-      resetDemo,
       exportData,
     }),
-    [state, addPatient, updatePatient, deletePatient, addAppointment, updateAppointment, deleteAppointment, createPublicBooking, addBlock, removeBlock, updateSettings, resetDemo, exportData],
+    [state, addPatient, updatePatient, deletePatient, addAppointment, updateAppointment, deleteAppointment, createPublicBooking, addBlock, removeBlock, updateSettings, exportData],
   )
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

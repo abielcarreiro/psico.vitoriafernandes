@@ -2,10 +2,10 @@
  * Configurações: perfil, horário de expediente, regras de agendamento, serviços, bloqueios e dados.
  */
 import { useState } from 'react'
-import { Ban, Clock, Database, Download, Plus, RotateCcw, Save, Sliders, Stethoscope, Trash2, UserRound } from 'lucide-react'
+import { Ban, Clock, Database, Download, Plus, Save, Sliders, Stethoscope, Trash2, UserRound } from 'lucide-react'
 import { useStore } from '../../context/AppStore'
 import BlockModal from '../../components/admin/BlockModal'
-import { ConfirmDialog, EmptyState, PageHeader, useToast } from '../../components/ui'
+import { EmptyState, PageHeader, useToast } from '../../components/ui'
 import { formatLongDate, todayISO, WEEKDAYS_LONG } from '../../lib/date'
 import { maskPhone, uid } from '../../lib/format'
 
@@ -53,7 +53,6 @@ export default function Settings() {
   })
   const [services, setServices, servicesDirty] = useDraft(settings.services)
   const [blocking, setBlocking] = useState(false)
-  const [confirmReset, setConfirmReset] = useState(false)
 
   const upcomingBlocks = store.blocks.filter((b) => b.date >= todayISO()).sort((a, b) => (a.date < b.date ? -1 : 1))
 
@@ -245,25 +244,11 @@ export default function Settings() {
         <Section icon={Database} title="Dados e backup" description="Os dados deste protótipo ficam salvos no navegador (localStorage).">
           <div className="flex flex-wrap gap-3">
             <button className="btn-secondary" onClick={store.exportData}><Download size={16} /> Baixar backup (JSON)</button>
-            <button className="btn-danger" onClick={() => setConfirmReset(true)}><RotateCcw size={16} /> Restaurar dados de demonstração</button>
           </div>
         </Section>
       </div>
 
       <BlockModal open={blocking} onClose={() => setBlocking(false)} />
-      <ConfirmDialog
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        danger
-        title="Restaurar demonstração?"
-        message="Todos os dados atuais (pacientes, sessões, anotações e configurações) serão substituídos pelos dados de exemplo. Baixe um backup antes, se necessário."
-        confirmLabel="Restaurar"
-        onConfirm={() => {
-          store.resetDemo()
-          toast('Dados de demonstração restaurados', 'info')
-          setTimeout(() => window.location.reload(), 400)
-        }}
-      />
     </>
   )
 }
