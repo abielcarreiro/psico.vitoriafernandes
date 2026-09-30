@@ -1,22 +1,30 @@
 /**
  * Tela de acesso ao painel.
- * Protótipo: valida uma senha fixa no front-end. Em produção, use autenticação no servidor.
+ * O e-mail e a senha são conferidos pelo Supabase Auth, no servidor.
  */
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Eye, EyeOff, Leaf, Lock } from 'lucide-react'
-import { DEMO_PASSWORD } from '../../lib/constants'
+import { ArrowLeft, Eye, EyeOff, Leaf, Lock, Mail } from 'lucide-react'
+import { useStore } from '../../context/AppStore'
 
-export default function Login({ onLogin }) {
+export default function Login({ notice = '' }) {
+  const { signIn, configured } = useStore()
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(notice)
+  const [loading, setLoading] = useState(false)
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
-    if (password === DEMO_PASSWORD) onLogin()
-    else setError('Senha incorreta. Tente novamente.')
+    if (!email.trim() || !password) return setError('Informe e-mail e senha.')
+    setLoading(true)
+    const err = await signIn(email, password)
+    setLoading(false)
+    if (err) setError(err)
   }
+
+  const clearError = () => setError('')
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-cream-50 px-4">
@@ -27,38 +35,55 @@ export default function Login({ onLogin }) {
         <Link to="/" className="mb-6 inline-flex items-center gap-1.5 text-sm font-medium text-ink-500 hover:text-ink-900">
           <ArrowLeft size={16} /> Voltar ao site
         </Link>
-        <form onSubmit={submit} className="card p-8">
+        <form onSubmit={submit} className="card p-8" noValidate>
           <span className="flex size-12 items-center justify-center rounded-2xl bg-sage-600 text-cream-50">
             <Leaf size={22} />
           </span>
           <h1 className="mt-6 text-2xl font-medium">Área da psicóloga</h1>
           <p className="mt-1 text-sm text-ink-500">Acesse sua agenda, prontuários e financeiro.</p>
 
-          <label className="label mt-6" htmlFor="pw">Senha</label>
+          <label className="label mt-6" htmlFor="email">E-mail</label>
+          <div className="relative">
+            <Mail size={16} className="absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-400" />
+            <input
+              id="email"
+              type="email"
+              autoComplete="username"
+              className="input pl-10"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                clearError()
+              }}
+              autoFocus
+              aria-invalid={!!error}
+            />
+          </div>
+
+          <label className="label mt-4" htmlFor="pw">Senha</label>
           <div className="relative">
             <Lock size={16} className="absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-400" />
             <input
               id="pw"
               type={show ? 'text' : 'password'}
+              autoComplete="current-password"
               className="input pr-11 pl-10"
               value={password}
               onChange={(e) => {
                 setPassword(e.target.value)
-                setError('')
+                clearError()
               }}
-              autoFocus
               aria-invalid={!!error}
-              aria-describedby="pw-hint"
             />
             <button type="button" onClick={() => setShow(!show)} className="absolute top-1/2 right-2 -translate-y-1/2 rounded-lg p-1.5 text-ink-400 hover:text-ink-900" aria-label={show ? 'Ocultar senha' : 'Mostrar senha'}>
               {show ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
-          {error && <p className="mt-2 text-xs font-medium text-rose-700">{error}</p>}
-          <button className="btn-primary mt-5 w-full py-3">Entrar</button>
-          <p id="pw-hint" className="mt-5 rounded-xl bg-cream-100 p-3 text-center text-xs text-ink-500">
-            Demonstração — senha: <code className="font-semibold text-ink-900">{DEMO_PASSWORD}</code>
-          </p>
+          {error && <p className="mt-2 text-xs font-medium text-rose-700" role="alert">{error}</p>}
+          {!configured && <p className="mt-2 text-xs font-medium text-rose-700" role="alert">O banco de dados não está configurado.</p>}
+          <button className="btn-primary mt-5 w-full py-3" disabled={loading || !configured}>
+            {loading ? 'Entrando…' : 'Entrar'}
+          </button>
         </form>
       </div>
     </div>

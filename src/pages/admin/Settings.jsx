@@ -241,7 +241,7 @@ export default function Settings() {
         </section>
 
         {/* Dados */}
-        <Section icon={Database} title="Dados e backup" description="Os dados deste protótipo ficam salvos no navegador (localStorage).">
+        <Section icon={Database} title="Dados e backup" description="Os dados ficam salvos no banco de dados (Supabase). Baixe um backup de vez em quando.">
           <div className="flex flex-wrap gap-3">
             <button className="btn-secondary" onClick={store.exportData}><Download size={16} /> Baixar backup (JSON)</button>
           </div>

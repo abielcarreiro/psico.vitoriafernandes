@@ -1,24 +1,35 @@
 # Agenda Psicologia · Vitória Fernandes
 
 Aplicação web para uma psicóloga gerenciar agendamentos, prontuários e financeiro.
-Protótipo **totalmente funcional sem backend**: os dados ficam no `localStorage` do navegador.
+Os dados ficam no **Supabase** (PostgreSQL + login), protegidos por Row Level Security.
 
-## Como abrir
+## Configuração do banco (Supabase)
 
-**Sem instalar nada:** dê dois cliques em **`dist/index.html`**. É um arquivo único e autocontido que funciona direto no navegador.
+1. Crie um projeto em https://supabase.com (região **South America (São Paulo)**).
+2. Em **SQL Editor**, cole todo o conteúdo de [`supabase/schema.sql`](supabase/schema.sql) e clique em **Run**.
+3. Em **Authentication → Sign In / Providers**, desative **Allow new users to sign up**.
+4. Em **Authentication → Users → Add user**, crie o usuário da psicóloga (e-mail + senha, marcando *Auto Confirm User*).
+5. No **SQL Editor**, libere o acesso ao painel para esse e-mail:
+   ```sql
+   insert into public.admins (user_id)
+   select id from auth.users where email = 'email-da-psicologa@exemplo.com';
+   ```
+6. Em **Project Settings → API**, copie a *Project URL* e a chave *anon public* para:
+   - `.env.local` (desenvolvimento). Veja o modelo em `.env.example`.
+   - Cloudflare Pages → **Settings → Variables and Secrets**: `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`. Depois, faça um novo deploy.
 
-> O `index.html` da raiz é só o *modelo* usado pelo Vite. Aberto direto, ele mostra uma página em branco.
+A chave *anon* é pública por natureza. Nunca coloque a chave *service_role* no site.
 
-**Para desenvolver:**
+## Desenvolvimento
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173 (atualiza ao salvar)
-npm run build      # gera de novo o dist/index.html
+npm run dev        # http://localhost:5173
+npm run build      # gera dist/index.html
 ```
 
-- Página pública: `index.html`
-- Painel: `index.html#/admin` ou o link "Área da psicóloga" no rodapé. Senha de demonstração: **`psico2026`** (fica em `src/lib/constants.js`)
+- Página pública: `/`
+- Painel: `/#/admin` ou o link "Área da psicóloga" no rodapé (login com o usuário criado no passo 4)
 
 ## Funcionalidades
 
@@ -33,16 +44,16 @@ npm run build      # gera de novo o dist/index.html
 - **Agenda**: visões Dia/Semana/Mês, filtro por status, clique num horário vazio para criar sessão, bloqueios hachurados, linha do horário atual, atalhos ← → T
 - **Pacientes (CRM)**: busca por nome/e-mail/telefone, filtros e ordenação; o prontuário tem histórico em linha do tempo, anotações privadas com **modo discreto** (desfoque) e salvamento automático, e um financeiro por paciente
 - **Financeiro**: faturamento, recebido, a receber, gráfico dos últimos 6 meses, divisão por serviço, registro de pagamento (Pix/cartão/dinheiro) e exportação CSV
-- **Configurações**: perfil, expediente e intervalo por dia da semana, regras (passo entre horários, pausa entre sessões, antecedência mínima, janela), serviços e valores, bloqueios, backup JSON e restauração da demonstração
+- **Configurações**: perfil, expediente e intervalo por dia da semana, regras (passo entre horários, pausa entre sessões, antecedência mínima, janela), serviços e valores, bloqueios, backup JSON
 
 ## Estrutura
 
 ```
 src/
 ├── App.jsx                  # rotas
-├── context/AppStore.jsx     # estado global + persistência localStorage + sync entre abas
-├── data/seed.js             # dados de demonstração (gerados relativos à data atual)
-├── lib/                     # date, format, availability, stats, whatsapp, ics, constants
+├── context/AppStore.jsx     # estado global sincronizado com o Supabase + login
+├── data/seed.js             # configurações padrão do consultório
+├── lib/                     # supabase, date, format, availability, stats, whatsapp, ics, constants
 ├── components/
 │   ├── ui/                  # Modal, StatusBadge, StatCard, Segmented, Toast…
 │   ├── booking/BookingWizard.jsx
@@ -52,14 +63,12 @@ src/
     └── admin/               # AdminLayout, Login, Dashboard, CalendarView, PatientList, PatientProfile, Financials, Settings
 ```
 
-## Antes de usar com pacientes reais
+supabase/schema.sql          # tabelas, regras de acesso (RLS) e funções de agendamento público
 
-Este é um protótipo. Os dados ficam só no navegador e a senha do painel é verificada no front-end.
-Dados de saúde são **dados sensíveis** pela LGPD, e o CFP exige sigilo e guarda de registros. Para produção:
+## Segurança
 
-1. Troque as ações do `AppStore.jsx` por chamadas a um backend (Supabase, Firebase ou uma API própria). Os componentes não mudam.
-2. Use autenticação real no servidor e controle de acesso por linha.
-3. Criptografe as anotações clínicas e faça backup.
-4. Ajuste o WhatsApp, o CRP, o endereço e os textos em **Configurações** ou em `src/data/seed.js`.
+- Visitantes só leem as configurações públicas e os horários ocupados, sem nenhum dado de paciente. Eles criam agendamentos pela função `create_public_booking`, que revalida serviço, expediente, antecedência, bloqueios e conflitos no servidor e limita cada paciente a 3 solicitações pendentes.
+- Pacientes, sessões, anotações e financeiro só são acessíveis para usuários cadastrados na tabela `admins`.
+- Dados de saúde são **dados sensíveis** pela LGPD. Use uma senha forte, ative backups no Supabase (plano pago) ou baixe o backup JSON em **Configurações** com frequência.
 
-Deploy: publique a pasta `dist/` em qualquer hospedagem estática (Netlify, Vercel, GitHub Pages). As rotas usam `#`, então não precisa de configuração extra.
+Deploy: Cloudflare Pages com build `npm run build` e saída `dist`. As rotas usam `#`, então não precisa de configuração extra.

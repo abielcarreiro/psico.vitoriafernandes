@@ -1,177 +1,287 @@
 /**
- * Store global da aplicação.
+ * Store global da aplicação, sincronizado com o Supabase.
  *
- * - Todo o estado (configurações, pacientes, sessões e bloqueios) vive aqui.
- * - É persistido automaticamente no localStorage a cada alteração.
- * - Sincroniza entre abas: um agendamento feito na página pública aparece
- *   imediatamente no painel aberto em outra aba.
- *
- * Para migrar para um backend real, basta trocar as funções `load/save` e as
- * ações abaixo por chamadas de API — os componentes não precisam mudar.
+ * - Visitantes: carrega as configurações e os horários ocupados (sem dados de pacientes).
+ * - Psicóloga logada (tabela "admins"): carrega pacientes, sessões e bloqueios completos.
+ * - As alterações do painel aparecem na hora (otimistas) e são gravadas no banco em fila,
+ *   na ordem em que foram feitas. Se uma gravação falhar, avisa e recarrega do banco.
+ * - Os dados do painel são recarregados ao voltar para a aba e a cada minuto,
+ *   para que agendamentos feitos pelo site apareçam sem precisar atualizar a página.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createInitialData, defaultSettings } from '../data/seed'
-import { STORAGE_KEY } from '../lib/constants'
-import { bookingCode, normalize, onlyDigits, uid } from '../lib/format'
+import { useToast } from '../components/ui'
+import { bookingCode, uid } from '../lib/format'
 import { todayISO } from '../lib/date'
+import {
+  appointmentFromRow, appointmentToRow, blockFromRow, blockToRow, fetchAll, patientFromRow, patientToRow, supabase,
+} from '../lib/supabase'
 
 const StoreContext = createContext(null)
 
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const data = JSON.parse(raw)
-      // Substitui CRP/WhatsApp de exemplo antigos pelos reais, sem apagar os demais dados
-      const p = data.settings?.psychologist
-      if (p?.crp === 'CRP 13/12345') p.crp = defaultSettings.psychologist.crp
-      if (p?.phone === '(83) 99999-0000') p.phone = defaultSettings.psychologist.phone
-      // Remove pacientes, sessões e bloqueios de demonstração salvos por versões antigas
-      const real = (item) => !String(item.id).includes('_seed_') && !String(item.patientId ?? '').includes('_seed_')
-      // Mescla configurações para tolerar novas chaves adicionadas em versões futuras
-      return {
-        ...data,
-        patients: (data.patients ?? []).filter(real),
-        appointments: (data.appointments ?? []).filter(real),
-        blocks: (data.blocks ?? []).filter(real),
-        settings: { ...defaultSettings, ...data.settings },
-      }
-    }
-  } catch {
-    /* localStorage indisponível ou corrompido: começa vazio */
-  }
-  return createInitialData()
+// Versões antigas guardavam tudo no navegador; esses dados não são mais usados
+try {
+  localStorage.removeItem('psico-agenda:v2')
+} catch {
+  /* ignora */
 }
 
-function save(state) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  } catch {
-    /* modo privado / cota excedida — segue apenas em memória */
-  }
+const BOOKING_ERRORS = {
+  horario_indisponivel: 'Esse horário acabou de ser reservado ou não está mais disponível. Escolha outro, por favor.',
+  limite_agendamentos: 'Você já tem solicitações aguardando confirmação. Fale com a psicóloga pelo WhatsApp.',
+  dados_invalidos: 'Confira seus dados e tente novamente.',
+  servico_invalido: 'Este serviço não está mais disponível. Atualize a página.',
 }
 
 export function AppStoreProvider({ children }) {
-  const [state, setState] = useState(load)
-  const skipSave = useRef(false)
+  const toast = useToast()
+  const [state, setState] = useState(createInitialData)
   const stateRef = useRef(state)
   stateRef.current = state
 
-  // Persistência automática
-  useEffect(() => {
-    if (skipSave.current) {
-      skipSave.current = false
-      return
-    }
-    save(state)
-  }, [state])
+  /* -------------------------------- Login -------------------------------- */
+  const [session, setSession] = useState(null)
+  const [sessionKnown, setSessionKnown] = useState(!supabase)
+  // Para qual usuário os dados atuais foram carregados (undefined = ainda não carregou)
+  const [loaded, setLoaded] = useState({ user: supabase ? undefined : null, isAdmin: false, failed: false })
+  const userId = session?.user?.id ?? null
 
-  // Sincronização entre abas
   useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === STORAGE_KEY && e.newValue) {
-        skipSave.current = true
-        setState(JSON.parse(e.newValue))
-      }
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+    if (!supabase) return
+    const { data } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setSessionKnown(true)
+    })
+    return () => data.subscription.unsubscribe()
   }, [])
+
+  /* ---------------------------- Carregamento ----------------------------- */
+  const writeQueue = useRef(Promise.resolve())
+  const pendingWrites = useRef(0)
+  const writeVersion = useRef(0)
+  const loadRequest = useRef(0)
+
+  const reload = useCallback(async () => {
+    if (!supabase) return
+    const request = ++loadRequest.current
+    const version = writeVersion.current
+    try {
+      const [settingsRes, adminRes] = await Promise.all([
+        supabase.from('settings').select('data').eq('id', 1).maybeSingle(),
+        userId ? supabase.rpc('is_admin') : Promise.resolve({ data: false }),
+      ])
+      if (settingsRes.error) throw settingsRes.error
+      if (adminRes.error) throw adminRes.error
+      const settings = { ...defaultSettings, ...settingsRes.data?.data }
+      const isAdmin = adminRes.data === true
+
+      let next
+      if (isAdmin) {
+        const [patients, appointments, blocks] = await Promise.all([fetchAll('patients'), fetchAll('appointments'), fetchAll('blocks')])
+        next = {
+          settings,
+          patients: patients.map(patientFromRow),
+          appointments: appointments.map(appointmentFromRow),
+          blocks: blocks.map(blockFromRow),
+        }
+      } else {
+        const { data, error } = await supabase.rpc('public_availability')
+        if (error) throw error
+        next = {
+          settings,
+          patients: [],
+          // Só o necessário para calcular horários livres
+          appointments: (data?.appointments ?? []).map((a, i) => ({ id: `busy_${i}`, status: 'confirmada', ...a })),
+          blocks: (data?.blocks ?? []).map((b, i) => ({ id: `busy_blk_${i}`, reason: '', ...b })),
+        }
+      }
+
+      // Descarta respostas antigas ou que chegaram enquanto havia alterações sendo gravadas
+      if (request !== loadRequest.current) return
+      if (pendingWrites.current > 0 || version !== writeVersion.current) return
+      setState(next)
+      setLoaded({ user: userId, isAdmin, failed: false })
+    } catch (err) {
+      console.error(err)
+      if (request !== loadRequest.current) return
+      setLoaded((l) => ({ user: userId, isAdmin: l.user === userId && l.isAdmin, failed: true }))
+      toast('Não foi possível carregar os dados. Verifique sua conexão.', 'error')
+    }
+  }, [userId, toast])
+
+  // Ao entrar/sair: limpa dados clínicos da tela imediatamente e recarrega
+  useEffect(() => {
+    if (!sessionKnown) return
+    if (!userId) setState((s) => ({ ...s, patients: [], appointments: [], blocks: [] }))
+    reload()
+  }, [sessionKnown, userId, reload])
+
+  const isAdmin = loaded.user === userId && loaded.isAdmin
+
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && reload()
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = isAdmin ? setInterval(reload, 60_000) : null
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(timer)
+    }
+  }, [reload, isAdmin])
+
+  /** Grava no banco em fila (preserva a ordem, ex.: paciente antes da sessão dele) */
+  const persist = useCallback(
+    (run) => {
+      if (!supabase) return
+      pendingWrites.current++
+      writeVersion.current++
+      writeQueue.current = writeQueue.current.then(async () => {
+        try {
+          const { error } = await run()
+          if (error) throw error
+        } catch (err) {
+          console.error(err)
+          toast('Não foi possível salvar a alteração. Os dados foram recarregados.', 'error')
+          writeVersion.current++
+          pendingWrites.current--
+          reload()
+          return
+        }
+        pendingWrites.current--
+      })
+    },
+    [toast, reload],
+  )
 
   /* ------------------------------ Pacientes ------------------------------ */
-  const addPatient = useCallback((data) => {
-    const patient = { id: uid('pat'), status: 'ativo', source: 'manual', generalNotes: '', createdAt: todayISO(), ...data }
-    setState((s) => ({ ...s, patients: [...s.patients, patient] }))
-    return patient
-  }, [])
+  const addPatient = useCallback(
+    (data) => {
+      const patient = { id: uid('pat'), status: 'ativo', source: 'manual', generalNotes: '', createdAt: todayISO(), ...data }
+      setState((s) => ({ ...s, patients: [...s.patients, patient] }))
+      persist(() => supabase.from('patients').insert(patientToRow(patient)))
+      return patient
+    },
+    [persist],
+  )
 
-  const updatePatient = useCallback((id, patch) => {
-    setState((s) => ({ ...s, patients: s.patients.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))
-  }, [])
+  const updatePatient = useCallback(
+    (id, patch) => {
+      setState((s) => ({ ...s, patients: s.patients.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))
+      persist(() => supabase.from('patients').update(patientToRow(patch)).eq('id', id))
+    },
+    [persist],
+  )
 
-  const deletePatient = useCallback((id) => {
-    setState((s) => ({
-      ...s,
-      patients: s.patients.filter((p) => p.id !== id),
-      appointments: s.appointments.filter((a) => a.patientId !== id),
-    }))
-  }, [])
+  const deletePatient = useCallback(
+    (id) => {
+      setState((s) => ({
+        ...s,
+        patients: s.patients.filter((p) => p.id !== id),
+        appointments: s.appointments.filter((a) => a.patientId !== id),
+      }))
+      // As sessões do paciente são apagadas em cascata pelo banco
+      persist(() => supabase.from('patients').delete().eq('id', id))
+    },
+    [persist],
+  )
 
   /* ------------------------------- Sessões ------------------------------- */
-  const addAppointment = useCallback((data) => {
-    const apt = { id: uid('apt'), code: bookingCode(), paid: false, paymentMethod: '', note: '', reason: '', createdAt: todayISO(), ...data }
-    setState((s) => ({ ...s, appointments: [...s.appointments, apt] }))
-    return apt
-  }, [])
+  const addAppointment = useCallback(
+    (data) => {
+      const apt = { id: uid('apt'), code: bookingCode(), paid: false, paymentMethod: '', note: '', reason: '', createdAt: todayISO(), ...data }
+      setState((s) => ({ ...s, appointments: [...s.appointments, apt] }))
+      persist(() => supabase.from('appointments').insert(appointmentToRow(apt)))
+      return apt
+    },
+    [persist],
+  )
 
-  const updateAppointment = useCallback((id, patch) => {
-    setState((s) => ({ ...s, appointments: s.appointments.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
-  }, [])
+  const updateAppointment = useCallback(
+    (id, patch) => {
+      setState((s) => ({ ...s, appointments: s.appointments.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
+      persist(() => supabase.from('appointments').update(appointmentToRow(patch)).eq('id', id))
+    },
+    [persist],
+  )
 
-  const deleteAppointment = useCallback((id) => {
-    setState((s) => ({ ...s, appointments: s.appointments.filter((a) => a.id !== id) }))
-  }, [])
+  const deleteAppointment = useCallback(
+    (id) => {
+      setState((s) => ({ ...s, appointments: s.appointments.filter((a) => a.id !== id) }))
+      persist(() => supabase.from('appointments').delete().eq('id', id))
+    },
+    [persist],
+  )
 
   /**
    * Agendamento feito pelo paciente na página pública.
-   * Reaproveita o cadastro se já existir paciente com mesmo telefone ou e-mail.
+   * Tudo é validado no servidor (função create_public_booking), que também
+   * reaproveita o cadastro se já existir paciente com o mesmo telefone ou e-mail.
+   * Lança um erro com mensagem amigável e `code` quando não for possível agendar.
    */
-  const createPublicBooking = useCallback(({ service, date, time, modality, name, phone, email, reason }) => {
-    const existing = stateRef.current.patients.find(
-      (p) => onlyDigits(p.phone) === onlyDigits(phone) || (email && normalize(p.email) === normalize(email)),
-    )
-    const patient = existing || {
-      id: uid('pat'),
-      name: name.trim(),
-      phone,
-      email: email.trim(),
-      birthDate: '',
-      reason,
-      status: 'ativo',
-      source: 'site',
-      generalNotes: '',
-      createdAt: todayISO(),
-    }
-    const appointment = {
-      id: uid('apt'),
-      code: bookingCode(),
-      patientId: patient.id,
-      serviceId: service.id,
-      serviceName: service.name,
-      date,
-      time,
-      duration: service.duration,
-      modality,
-      status: 'pendente', // a psicóloga confirma pelo painel
-      price: service.price,
-      paid: false,
-      paymentMethod: '',
-      note: '',
-      reason,
-      createdAt: todayISO(),
-    }
-    setState((s) => ({
-      ...s,
-      patients: existing
-        ? s.patients.map((p) => (p.id === existing.id ? { ...p, status: 'ativo' } : p))
-        : [...s.patients, patient],
-      appointments: [...s.appointments, appointment],
-    }))
-    return appointment
-  }, [])
+  const createPublicBooking = useCallback(
+    async ({ service, date, time, modality, name, phone, email, reason }) => {
+      if (!supabase) throw Object.assign(new Error('Agendamento indisponível no momento. Tente pelo WhatsApp.'), { code: 'offline' })
+      const { data, error } = await supabase.rpc('create_public_booking', {
+        p_service_id: service.id,
+        p_date: date,
+        p_time: time,
+        p_modality: modality,
+        p_name: name,
+        p_phone: phone,
+        p_email: email,
+        p_reason: reason,
+      })
+      if (error) {
+        const code = Object.keys(BOOKING_ERRORS).find((k) => error.message?.includes(k))
+        if (code === 'horario_indisponivel') reload()
+        throw Object.assign(new Error(BOOKING_ERRORS[code] || 'Não foi possível concluir o agendamento. Tente novamente.'), { code })
+      }
+      reload()
+      return { id: data.id, code: data.code, serviceId: service.id, serviceName: data.serviceName, date, time, duration: data.duration, modality, status: 'pendente', price: data.price }
+    },
+    [reload],
+  )
 
   /* ------------------------------ Bloqueios ------------------------------ */
-  const addBlock = useCallback((data) => {
-    setState((s) => ({ ...s, blocks: [...s.blocks, { id: uid('blk'), ...data }] }))
-  }, [])
+  const addBlock = useCallback(
+    (data) => {
+      const block = { id: uid('blk'), ...data }
+      setState((s) => ({ ...s, blocks: [...s.blocks, block] }))
+      persist(() => supabase.from('blocks').insert(blockToRow(block)))
+    },
+    [persist],
+  )
 
-  const removeBlock = useCallback((id) => {
-    setState((s) => ({ ...s, blocks: s.blocks.filter((b) => b.id !== id) }))
-  }, [])
+  const removeBlock = useCallback(
+    (id) => {
+      setState((s) => ({ ...s, blocks: s.blocks.filter((b) => b.id !== id) }))
+      persist(() => supabase.from('blocks').delete().eq('id', id))
+    },
+    [persist],
+  )
 
   /* ---------------------------- Configurações ---------------------------- */
-  const updateSettings = useCallback((patch) => {
-    setState((s) => ({ ...s, settings: { ...s.settings, ...patch } }))
+  const updateSettings = useCallback(
+    (patch) => {
+      const settings = { ...stateRef.current.settings, ...patch }
+      stateRef.current = { ...stateRef.current, settings }
+      setState((s) => ({ ...s, settings: { ...s.settings, ...patch } }))
+      persist(() => supabase.from('settings').update({ data: settings, updated_at: new Date().toISOString() }).eq('id', 1))
+    },
+    [persist],
+  )
+
+  /* -------------------------------- Login -------------------------------- */
+  /** Retorna uma mensagem de erro, ou null se entrou */
+  const signIn = useCallback(async (email, password) => {
+    if (!supabase) return 'O banco de dados não está configurado.'
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+    if (!error) return null
+    if (error.message?.includes('Invalid login credentials')) return 'E-mail ou senha incorretos.'
+    return 'Não foi possível entrar. Tente novamente.'
+  }, [])
+
+  const signOut = useCallback(async () => {
+    await supabase?.auth.signOut()
   }, [])
 
   /** Exporta um backup JSON dos dados */
@@ -188,6 +298,14 @@ export function AppStoreProvider({ children }) {
     () => ({
       ...state,
       patientsById: Object.fromEntries(state.patients.map((p) => [p.id, p])),
+      configured: !!supabase,
+      session,
+      isAdmin,
+      authLoading: !sessionKnown || loaded.user !== userId,
+      loadFailed: loaded.failed,
+      reload,
+      signIn,
+      signOut,
       addPatient,
       updatePatient,
       deletePatient,
@@ -200,7 +318,7 @@ export function AppStoreProvider({ children }) {
       updateSettings,
       exportData,
     }),
-    [state, addPatient, updatePatient, deletePatient, addAppointment, updateAppointment, deleteAppointment, createPublicBooking, addBlock, removeBlock, updateSettings, exportData],
+    [state, session, isAdmin, sessionKnown, loaded.user, loaded.failed, userId, reload, signIn, signOut, addPatient, updatePatient, deletePatient, addAppointment, updateAppointment, deleteAppointment, createPublicBooking, addBlock, removeBlock, updateSettings, exportData],
   )
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

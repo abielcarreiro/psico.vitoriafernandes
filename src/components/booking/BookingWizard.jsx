@@ -30,6 +30,8 @@ export default function BookingWizard({ preselectedServiceId }) {
   const [form, setForm] = useState({ name: '', phone: '', email: '', reason: '', consent: false })
   const [errors, setErrors] = useState({})
   const [booking, setBooking] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
 
   const service = settings.services.find((s) => s.id === serviceId) || settings.services[0]
 
@@ -44,6 +46,11 @@ export default function BookingWizard({ preselectedServiceId }) {
 
   // Ao trocar de serviço (duração diferente), o horário escolhido pode deixar de caber
   useEffect(() => setTime(null), [serviceId])
+
+  // Escolheu outro horário: some o aviso de erro anterior
+  useEffect(() => {
+    if (time) setSubmitError('')
+  }, [time])
 
   const goTo = (n) => {
     setStep(n)
@@ -60,21 +67,35 @@ export default function BookingWizard({ preselectedServiceId }) {
     return !Object.keys(e).length
   }
 
-  const submit = (ev) => {
+  const submit = async (ev) => {
     ev.preventDefault()
-    if (!validate()) return
+    if (submitting || !validate()) return
+    setSubmitError('')
     // Revalida disponibilidade (outra pessoa pode ter reservado o horário)
     if (!getAvailableSlots(date, service.duration, store).includes(time)) {
       setTime(null)
+      setSubmitError('Esse horário não está mais disponível. Escolha outro, por favor.')
       goTo(1)
       return
     }
-    const apt = store.createPublicBooking({ service, date, time, modality, ...form })
-    setBooking({ ...apt, patientName: form.name.trim() })
+    setSubmitting(true)
+    try {
+      const apt = await store.createPublicBooking({ service, date, time, modality, ...form })
+      setBooking({ ...apt, patientName: form.name.trim() })
+    } catch (err) {
+      setSubmitError(err.message)
+      if (err.code === 'horario_indisponivel') {
+        setTime(null)
+        goTo(1)
+      }
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const reset = () => {
     setBooking(null)
+    setSubmitError('')
     setDate(null)
     setTime(null)
     setForm({ name: '', phone: '', email: '', reason: '', consent: false })
@@ -102,6 +123,12 @@ export default function BookingWizard({ preselectedServiceId }) {
           {step === 1 && <DateTimeStep service={service} date={date} setDate={setDate} time={time} setTime={setTime} />}
           {step === 2 && <DetailsStep form={form} setForm={setForm} errors={errors} onSubmit={submit} />}
 
+          {submitError && (
+            <p className="mt-6 rounded-xl bg-rose-50 p-3 text-sm font-medium text-rose-800 ring-1 ring-rose-200" role="alert">
+              {submitError}
+            </p>
+          )}
+
           {/* Navegação */}
           <div className="mt-8 flex items-center justify-between gap-3 border-t border-sage-100 pt-6">
             {step > 0 ? (
@@ -114,8 +141,8 @@ export default function BookingWizard({ preselectedServiceId }) {
                 Continuar <ArrowRight size={16} />
               </button>
             ) : (
-              <button className="btn-primary" type="submit" form="booking-form">
-                <CalendarCheck size={16} /> Confirmar agendamento
+              <button className="btn-primary" type="submit" form="booking-form" disabled={submitting}>
+                <CalendarCheck size={16} /> {submitting ? 'Enviando…' : 'Confirmar agendamento'}
               </button>
             )}
           </div>

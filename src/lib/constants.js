@@ -22,12 +22,3 @@ export const MODALITIES = {
   presencial: 'Presencial',
   online: 'Online',
 }
-
-/**
- * Senha de demonstração do painel.
- * ATENÇÃO: é apenas uma trava de protótipo no front-end. Em produção, substitua por
- * autenticação real no servidor (ex.: Supabase Auth, Firebase Auth, NextAuth).
- */
-export const DEMO_PASSWORD = 'psico2026'
-
-export const STORAGE_KEY = 'psico-agenda:v2'

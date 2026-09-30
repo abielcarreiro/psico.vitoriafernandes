@@ -22,8 +22,8 @@ import Settings from './pages/admin/Settings'
 
 export default function App() {
   return (
-    <AppStoreProvider>
-      <ToastProvider>
+    <ToastProvider>
+      <AppStoreProvider>
         <HashRouter>
           <Routes>
             <Route path="/" element={<BookingPage />} />
@@ -38,7 +38,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </HashRouter>
-      </ToastProvider>
-    </AppStoreProvider>
+      </AppStoreProvider>
+    </ToastProvider>
   )
 }

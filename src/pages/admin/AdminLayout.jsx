@@ -1,14 +1,12 @@
 /**
- * Estrutura do painel administrativo: autenticação simples + navegação lateral.
+ * Estrutura do painel administrativo: login (Supabase Auth) + navegação lateral.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { CalendarDays, ExternalLink, LayoutDashboard, Leaf, LogOut, Menu, Settings, Users, Wallet, X } from 'lucide-react'
 import { useStore } from '../../context/AppStore'
 import { Avatar } from '../../components/ui'
 import Login from './Login'
-
-const AUTH_KEY = 'psico-agenda:auth'
 
 const NAV = [
   { to: '/admin', end: true, icon: LayoutDashboard, label: 'Visão geral' },
@@ -19,32 +17,44 @@ const NAV = [
 ]
 
 export default function AdminLayout() {
-  const [authed, setAuthed] = useState(() => {
-    try {
-      return sessionStorage.getItem(AUTH_KEY) === '1'
-    } catch {
-      return false
-    }
-  })
   const [menuOpen, setMenuOpen] = useState(false)
-  const { settings, appointments } = useStore()
+  const [denied, setDenied] = useState(false)
+  const { settings, appointments, session, isAdmin, authLoading, loadFailed, reload, signOut } = useStore()
   const location = useLocation()
   const pendingCount = appointments.filter((a) => a.status === 'pendente').length
 
-  const login = () => {
-    try {
-      sessionStorage.setItem(AUTH_KEY, '1')
-    } catch { /* ignora */ }
-    setAuthed(true)
-  }
+  // Conta sem permissão de acesso ao painel: sai e avisa
+  useEffect(() => {
+    if (session && !authLoading && !loadFailed && !isAdmin) {
+      setDenied(true)
+      signOut()
+    }
+  }, [session, authLoading, loadFailed, isAdmin, signOut])
+
   const logout = () => {
-    try {
-      sessionStorage.removeItem(AUTH_KEY)
-    } catch { /* ignora */ }
-    setAuthed(false)
+    setDenied(false)
+    signOut()
   }
 
-  if (!authed) return <Login onLogin={login} />
+  if (session && loadFailed && !isAdmin) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-cream-50 px-4 text-center" role="alert">
+        <p className="text-ink-700">Não foi possível carregar o painel. Verifique sua conexão.</p>
+        <div className="flex gap-3">
+          <button className="btn-primary" onClick={reload}>Tentar de novo</button>
+          <button className="btn-ghost" onClick={logout}>Sair</button>
+        </div>
+      </div>
+    )
+  }
+  if (authLoading || (session && !isAdmin)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-cream-50 text-sm text-ink-500" role="status">
+        Carregando…
+      </div>
+    )
+  }
+  if (!session) return <Login notice={denied ? 'Esta conta não tem acesso ao painel.' : ''} />
 
   const nav = (
     <nav className="flex flex-col gap-1" aria-label="Painel">
